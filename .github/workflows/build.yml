@@ -1,0 +1,350 @@
+name: Build RAY AI APK
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v4
+      with:
+        gradle-version: '8.9'
+
+    - name: Create Project Files
+      run: |
+        mkdir -p app/src/main/java/tj/ray/ai
+
+        cat << 'EOF' > settings.gradle.kts
+        pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+        dependencyResolutionManagement {
+            repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+            repositories { google(); mavenCentral() }
+        }
+        rootProject.name = "RAY AI"
+        include(":app")
+        EOF
+
+        cat << 'EOF' > build.gradle.kts
+        plugins {
+            id("com.android.application") version "8.5.2" apply false
+            id("org.jetbrains.kotlin.android") version "2.0.0" apply false
+            id("org.jetbrains.kotlin.plugin.compose") version "2.0.0" apply false
+        }
+        EOF
+
+        cat << 'EOF' > app/build.gradle.kts
+        plugins {
+            id("com.android.application")
+            id("org.jetbrains.kotlin.android")
+            id("org.jetbrains.kotlin.plugin.compose")
+        }
+        android {
+            namespace = "tj.ray.ai"
+            compileSdk = 35
+            defaultConfig {
+                applicationId = "tj.ray.ai"
+                minSdk = 24
+                targetSdk = 35
+                versionCode = 1
+                versionName = "1.0"
+            }
+            compileOptions {
+                sourceCompatibility = JavaVersion.VERSION_17
+                targetCompatibility = JavaVersion.VERSION_17
+            }
+            kotlinOptions { jvmTarget = "17" }
+            buildFeatures { compose = true }
+        }
+        dependencies {
+            val composeBom = platform("androidx.compose:compose-bom:2024.09.02")
+            implementation(composeBom)
+            implementation("androidx.core:core-ktx:1.13.1")
+            implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.6")
+            implementation("androidx.activity:activity-compose:1.9.2")
+            implementation("androidx.compose.ui:ui")
+            implementation("androidx.compose.ui:ui-graphics")
+            implementation("androidx.compose.material3:material3:1.3.0")
+            implementation("androidx.compose.material:material-icons-extended")
+        }
+        EOF
+
+        cat << 'EOF' > app/src/main/AndroidManifest.xml
+        <?xml version="1.0" encoding="utf-8"?>
+        <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+            <uses-permission android:name="android.permission.RECORD_AUDIO" />
+            <uses-permission android:name="android.permission.INTERNET" />
+            <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+            <application
+                android:allowBackup="true"
+                android:label="RAY AI"
+                android:supportsRtl="true"
+                android:theme="@android:style/Theme.Material.NoActionBar">
+                <activity android:name=".MainActivity" android:exported="true">
+                    <intent-filter>
+                        <action android:name="android.intent.action.MAIN" />
+                        <category android:name="android.intent.category.LAUNCHER" />
+                    </intent-filter>
+                </activity>
+            </application>
+        </manifest>
+        EOF
+
+        cat << 'EOF' > app/src/main/java/tj/ray/ai/MainActivity.kt
+        package tj.ray.ai
+
+        import android.Manifest
+        import android.app.Activity
+        import android.content.ActivityNotFoundException
+        import android.content.Context
+        import android.content.Intent
+        import android.content.pm.PackageManager
+        import android.os.Bundle
+        import android.speech.RecognizerIntent
+        import android.widget.Toast
+        import androidx.activity.ComponentActivity
+        import androidx.activity.compose.rememberLauncherForActivityResult
+        import androidx.activity.compose.setContent
+        import androidx.activity.result.ActivityResultLauncher
+        import androidx.activity.result.contract.ActivityResultContracts
+        import androidx.compose.foundation.BorderStroke
+        import androidx.compose.foundation.background
+        import androidx.compose.foundation.border
+        import androidx.compose.foundation.layout.*
+        import androidx.compose.foundation.rememberScrollState
+        import androidx.compose.foundation.shape.CircleShape
+        import androidx.compose.foundation.shape.RoundedCornerShape
+        import androidx.compose.foundation.verticalScroll
+        import androidx.compose.material.icons.Icons
+        import androidx.compose.material.icons.filled.Mic
+        import androidx.compose.material.icons.filled.PlayArrow
+        import androidx.compose.material.icons.filled.Send
+        import androidx.compose.material.icons.filled.Stop
+        import androidx.compose.material.icons.filled.Warning
+        import androidx.compose.material3.*
+        import androidx.compose.runtime.*
+        import androidx.compose.ui.Alignment
+        import androidx.compose.ui.Modifier
+        import androidx.compose.ui.draw.clip
+        import androidx.compose.ui.graphics.Brush
+        import androidx.compose.ui.graphics.Color
+        import androidx.compose.ui.platform.LocalContext
+        import androidx.compose.ui.text.font.FontFamily
+        import androidx.compose.ui.text.font.FontWeight
+        import androidx.compose.ui.unit.dp
+        import androidx.compose.ui.unit.sp
+        import androidx.core.content.ContextCompat
+
+        enum class RayStatus(val labelTajik: String, val color: Color) {
+            IDLE("Интизорӣ", Color(0xFF8E99A2)),
+            LISTENING("Гӯш карда истодааст", Color(0xFF00E5FF)),
+            RUNNING("Дар ҳоли иҷро", Color(0xFF00FF66)),
+            STOPPED("Қатъ шуд", Color(0xFFFF9100)),
+            EMERGENCY_STOPPED("Қатъи фаврӣ!", Color(0xFFFF1744))
+        }
+
+        class MainActivity : ComponentActivity() {
+            override fun onCreate(savedInstanceState: Bundle?) {
+                super.onCreate(savedInstanceState)
+                setContent {
+                    MaterialTheme(colorScheme = darkColorScheme(background = Color(0xFF0A0D14))) {
+                        Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF0A0D14)) {
+                            RayAiMainScreen()
+                        }
+                    }
+                }
+            }
+        }
+
+        @Composable
+        fun RayAiMainScreen() {
+            val context = LocalContext.current
+            var commandText by remember { mutableStateOf("") }
+            var currentStatus by remember { mutableStateOf(RayStatus.IDLE) }
+            var logHistory by remember { mutableStateOf(listOf("Системаи RAY AI омода аст.")) }
+
+            val speechLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.StartActivityForResult()
+            ) { result ->
+                currentStatus = RayStatus.IDLE
+                if (result.resultCode == Activity.RESULT_OK) {
+                    val spokenText = result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull().orEmpty()
+                    if (spokenText.isNotBlank()) {
+                        commandText = spokenText
+                        logHistory = logHistory + "Овоз: $spokenText"
+                    }
+                }
+            }
+
+            val permissionLauncher = rememberLauncherForActivityResult(
+                contract = ActivityResultContracts.RequestPermission()
+            ) { granted ->
+                if (granted) {
+                    startSpeechRecognition(context, speechLauncher, { currentStatus = RayStatus.LISTENING }, { currentStatus = RayStatus.IDLE })
+                } else {
+                    currentStatus = RayStatus.IDLE
+                    Toast.makeText(context, "Иҷозати микрофон лозим аст", Toast.LENGTH_SHORT).show()
+                }
+            }
+
+            fun onMicClick() {
+                val granted = ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
+                if (granted) {
+                    startSpeechRecognition(context, speechLauncher, { currentStatus = RayStatus.LISTENING }, { currentStatus = RayStatus.IDLE })
+                } else {
+                    permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                }
+            }
+
+            Column(
+                modifier = Modifier.fillMaxSize().background(Color(0xFF0A0D14)).padding(16.dp).verticalScroll(rememberScrollState()),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                Text("RAY AI CORE", fontSize = 26.sp, fontWeight = FontWeight.Black, fontFamily = FontFamily.Monospace, color = Color(0xFF00E5FF), letterSpacing = 4.sp, modifier = Modifier.padding(top = 12.dp))
+                Text("СИСТЕМАИ ИДОРАКУНИИ ЗЕҲНИ СУНЪӢ", fontSize = 10.sp, fontWeight = FontWeight.SemiBold, color = Color(0xFF53637D), letterSpacing = 1.2.sp)
+                Spacer(modifier = Modifier.height(18.dp))
+
+                Card(
+                    modifier = Modifier.fillMaxWidth().border(BorderStroke(1.dp, currentStatus.color.copy(alpha = 0.5f)), RoundedCornerShape(12.dp)),
+                    colors = CardDefaults.cardColors(containerColor = Color(0xFF101520))
+                ) {
+                    Row(modifier = Modifier.padding(14.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column {
+                            Text("ҲОЛАТИ СИСТЕМА", fontSize = 11.sp, color = Color(0xFF6B7B96))
+                            Text(currentStatus.labelTajik, fontSize = 19.sp, fontWeight = FontWeight.Bold, color = currentStatus.color)
+                        }
+                        Box(modifier = Modifier.size(20.dp).clip(CircleShape).background(currentStatus.color))
+                    }
+                }
+                Spacer(modifier = Modifier.height(18.dp))
+
+                OutlinedTextField(
+                    value = commandText,
+                    onValueChange = { commandText = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text("Фармонро ворид кунед...", color = Color(0xFF4C5B72), fontSize = 14.sp) },
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = Color(0xFF00E5FF),
+                        unfocusedBorderColor = Color(0xFF1E2838),
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    trailingIcon = {
+                        Row(modifier = Modifier.padding(end = 4.dp)) {
+                            IconButton(onClick = { onMicClick() }) { Icon(Icons.Default.Mic, contentDescription = null, tint = Color(0xFF00E5FF)) }
+                            IconButton(onClick = {
+                                if (commandText.isNotBlank()) {
+                                    logHistory = logHistory + "Фармон: $commandText"
+                                    currentStatus = RayStatus.RUNNING
+                                    commandText = ""
+                                }
+                            }) { Icon(Icons.Default.Send, contentDescription = null, tint = Color(0xFF00FF66)) }
+                        }
+                    }
+                )
+                Spacer(modifier = Modifier.height(18.dp))
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Button(onClick = { currentStatus = RayStatus.RUNNING; logHistory = logHistory + "Фаъол шуд." }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF00FF66)), shape = RoundedCornerShape(10.dp)) {
+                        Icon(Icons.Default.PlayArrow, contentDescription = null, tint = Color.Black)
+                        Text("Оғоз", color = Color.Black, fontWeight = FontWeight.Bold)
+                    }
+                    Button(onClick = { currentStatus = RayStatus.STOPPED; logHistory = logHistory + "Қатъ карда шуд." }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1E2A38)), shape = RoundedCornerShape(10.dp)) {
+                        Icon(Icons.Default.Stop, contentDescription = null, tint = Color.White)
+                        Text("Ист", color = Color.White, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Button(
+                    onClick = { currentStatus = RayStatus.EMERGENCY_STOPPED; logHistory = logHistory + "ҚАТЪИ ФАВРӢ!" },
+                    modifier = Modifier.fillMaxWidth().border(1.dp, Color(0xFFFF1744), RoundedCornerShape(10.dp)),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0x33FF1744)),
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(Icons.Default.Warning, contentDescription = null, tint = Color(0xFFFF1744))
+                    Spacer(Modifier.width(8.dp))
+                    Text("ҚАТЪИ ФАВРӢ", color = Color(0xFFFF1744), fontWeight = FontWeight.ExtraBold)
+                }
+
+                Spacer(modifier = Modifier.height(20.dp))
+                Text("МОДУЛҲОИ МАРКАЗӢ", fontSize = 12.sp, fontWeight = FontWeight.Bold, color = Color(0xFF70839C), modifier = Modifier.fillMaxWidth())
+                Spacer(modifier = Modifier.height(8.dp))
+
+                ModuleItem("RAY Brain", "Маркази таҳлил ва коркарди маълумот", Color(0xFF9D4EDD))
+                Spacer(modifier = Modifier.height(8.dp))
+                ModuleItem("RAY Gaming", "Модули оптимизатсияи суръат ва бозиҳо", Color(0xFF00FF66))
+                Spacer(modifier = Modifier.height(8.dp))
+                ModuleItem("RAY Vision", "Системаи ташхиси тасвир ва камера", Color(0xFF00E5FF))
+
+                Spacer(modifier = Modifier.height(20.dp))
+                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = Color(0xFF080B10)), border = BorderStroke(1.dp, Color(0xFF1B2330))) {
+                    Column(modifier = Modifier.padding(12.dp)) {
+                        Text("> Сабти терминал:", fontSize = 11.sp, fontFamily = FontFamily.Monospace, color = Color(0xFF526177))
+                        logHistory.takeLast(3).forEach { log ->
+                            Text("• $log", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = Color(0xFF90A4AE))
+                        }
+                    }
+                }
+            }
+        }
+
+        @Composable
+        fun ModuleItem(title: String, desc: String, color: Color) {
+            Card(
+                modifier = Modifier.fillMaxWidth().border(BorderStroke(1.dp, Brush.horizontalGradient(listOf(color.copy(alpha = 0.6f), Color(0xFF141A29)))), RoundedCornerShape(10.dp)),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF0E131D))
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(title, fontWeight = FontWeight.Bold, fontSize = 15.sp, color = color, fontFamily = FontFamily.Monospace)
+                        Text("[ДАР ИНТИЗОРӢ]", fontSize = 10.sp, color = Color(0xFF55657E))
+                    }
+                    Text(desc, fontSize = 11.sp, color = Color(0xFF8B9EB5))
+                }
+            }
+        }
+
+        fun startSpeechRecognition(context: Context, launcher: ActivityResultLauncher<Intent>, onStart: () -> Unit, onErr: () -> Unit) {
+            try {
+                val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE, "tg-TJ")
+                    putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "tg-TJ")
+                    putExtra(RecognizerIntent.EXTRA_ONLY_RETURN_LANGUAGE_PREFERENCE, false)
+                    putExtra(RecognizerIntent.EXTRA_PROMPT, "Фармонро гӯед...")
+                }
+                onStart()
+                launcher.launch(intent)
+            } catch (e: ActivityNotFoundException) {
+                Toast.makeText(context, "Шинохти овоз ёфт нашуд", Toast.LENGTH_SHORT).show()
+                onErr()
+            }
+        }
+        EOF
+
+    - name: Build APK
+      run: gradle assembleDebug
+
+    - name: Upload APK
+      uses: actions/upload-artifact@v4
+      with:
+        name: RAY-AI-Debug-APK
+        path: app/build/outputs/apk/debug/*.apk
